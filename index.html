@@ -7364,6 +7364,14 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
 
             companion.group.position.y =
                 terrainHeight(companion.group.position.x, companion.group.position.z) + bob;
+
+            // 为队友 (悟空、八戒、沙僧等) 调用腿部与全身步行/跑动动作更新
+            if (typeof XM !== 'undefined' && XM.updateCharacterLocomotion) {
+                const companionTime = (companion.group.userData.walkTime || 0) * 0.1;
+                const figure = companion.group.userData?.characterHandle || companion.group;
+                XM.updateCharacterLocomotion(figure, delta, player.moving, 4, companionTime);
+                XM.updateProceduralIdle(figure, delta, player.moving, companionTime);
+            }
         });
 
         lastCompanionFormationYaw = currentYaw;
