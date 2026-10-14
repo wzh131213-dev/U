@@ -7156,18 +7156,14 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
     function updatePlayer(delta) {
         const input = getMovementInput();
 
-        // 键盘左右现在是“旋转”，不是横向移动。
-        // yaw = 0 时人物面向 +Z；yaw 增大时向 +X 方向转。
+        // 键盘左右：转向
         const keyboardTurnLeft = keys["KeyA"] || keys["ArrowLeft"];
         const keyboardTurnRight = keys["KeyD"] || keys["ArrowRight"];
-        // Three.js 的 yaw 正方向与用户看到的“右转”方向相反，
-        // 因此这里明确交换正负号：← 左转、→ 右转。
         const turnDirection =
             (keyboardTurnLeft ? 1 : 0) -
             (keyboardTurnRight ? 1 : 0);
 
         if (pointerDirection && pointerDirection.strength > 0.05) {
-            // 手指/鼠标/摇杆拥有最高优先级：人物始终朝输入方向。
             player.yaw = Math.atan2(
                 pointerDirection.x,
                 pointerDirection.y
@@ -7177,44 +7173,35 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
             player.yaw += turnDirection * turnSpeed * delta;
         }
 
-        const movement = new THREE.Vector3();
-
-        // 触屏方向键保持平面移动。
-        // 键盘 W/↑、S/↓ 则严格按照人物当前 yaw 计算前后。
-        const keyboardForward =
-            keys["KeyW"] || keys["ArrowUp"];
-        const keyboardBackward =
-            keys["KeyS"] || keys["ArrowDown"];
+        const targetDir = new THREE.Vector3();
+        const keyboardForward = keys["KeyW"] || keys["ArrowUp"];
+        const keyboardBackward = keys["KeyS"] || keys["ArrowDown"];
 
         if (pointerDirection && pointerDirection.strength > 0.05) {
-            movement.set(
+            targetDir.set(
                 pointerDirection.x * pointerDirection.strength,
                 0,
                 pointerDirection.y * pointerDirection.strength
             );
         } else if (keyboardForward || keyboardBackward) {
             const direction = keyboardForward ? 1 : -1;
-            movement.set(
+            targetDir.set(
                 Math.sin(player.yaw) * direction,
                 0,
                 Math.cos(player.yaw) * direction
             );
         } else if (input.lengthSq && input.lengthSq() > 0.0001) {
-            movement.set(input.x, 0, input.y);
+            targetDir.set(input.x, 0, input.y);
         }
 
-        if (movement.lengthSq() > 1) {
-            movement.normalize();
+        if (targetDir.lengthSq() > 1) {
+            targetDir.normalize();
         }
-
-        const isMoving = movement.lengthSq() > 0.0001;
-        player.moving = isMoving;
 
         const nearest = getNearestRoad(player.position);
         player.currentRoad = nearest.road;
 
-        let speed = CONFIG.playerWalkSpeed * partyStats().speed;
-
+        let targetSpeedScalar = CONFIG.playerWalkSpeed * partyStats().speed;
         const onMainRoad =
             nearest.distance < CONFIG.roadWidth * 0.7 &&
             nearest.road &&
@@ -7226,16 +7213,23 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
             nearest.road.type === "branch";
 
         if (onMainRoad) {
-            speed *= player.roadSpeedMultiplier;
+            targetSpeedScalar *= player.roadSpeedMultiplier;
         } else if (onBranchRoad) {
-            speed *= 2.0;
+            targetSpeedScalar *= 2.0;
         } else if (sprinting) {
-            speed = CONFIG.playerSprintSpeed * partyStats().speed;
+            targetSpeedScalar = CONFIG.playerSprintSpeed * partyStats().speed;
         }
 
-        const previousPosition = player.position.clone();
+        // 惯性与加速度/阻尼动力学模型
+        const targetVel = targetDir.clone().multiplyScalar(targetSpeedScalar);
+        const accelRate = targetDir.lengthSq() > 0.0001 ? 14 : 9;
+        player.velocity.lerp(targetVel, Math.min(1, delta * accelRate));
 
-        player.position.addScaledVector(movement, speed * delta);
+        const isMoving = player.velocity.lengthSq() > 0.04;
+        player.moving = isMoving;
+
+        const previousPosition = player.position.clone();
+        player.position.addScaledVector(player.velocity, delta);
 
         player.position.x = THREE.MathUtils.clamp(
             player.position.x,
@@ -7260,9 +7254,6 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
 
         playerGroup.position.copy(player.position);
 
-        // 人物模型始终朝向当前 yaw。
-        // 白龙马模型自身的“头部”朝 +X，而游戏的正前方是 +Z，
-        // 因此模型显示角度需要减去 90°。
         const modelYaw = player.yaw - Math.PI / 2;
         playerGroup.rotation.y = lerpAngle(
             playerGroup.rotation.y,
@@ -7271,8 +7262,7 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
         );
 
         if (isMoving) {
-            // 队伍跟随使用真实的移动方向。
-            player.moveYaw = Math.atan2(movement.x, movement.z);
+            player.moveYaw = Math.atan2(player.velocity.x, player.velocity.z);
         }
 
         animatePlayerModel(delta, isMoving);
@@ -8745,6 +8735,9 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
                 sun.shadow.camera.bottom = -150;
                 sun.shadow.camera.near = 10;
                 sun.shadow.camera.far = 1000;
+                if (sun.shadow.camera.updateProjectionMatrix) {
+                    sun.shadow.camera.updateProjectionMatrix();
+                }
             }
         }
 
