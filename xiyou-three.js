@@ -20,15 +20,68 @@ export function toGeometry(THREE, m, { skinned = false } = {}) {
   return g;
 }
 
-/** 材质描述 → THREE 材质。opts.materialFactory(spec) 可返回自定义材质（例如你项目里的 patchMaterial）；返回空则走默认 */
+/** 材质描述 → THREE 材质。全面引入 PBR（基于物理的渲染）标准：精细化分层与物理参数 */
 export function makeMaterial(THREE, spec, opts = {}) {
   if (opts.materialFactory) { const custom = opts.materialFactory(spec); if (custom) return custom; }
-  const physical = spec.kind === 'cloth' && spec.sheen > 0 && THREE.MeshPhysicalMaterial;
-  const Cls = physical || THREE.MeshStandardMaterial;
-  const mat = new Cls({ roughness: spec.roughness ?? 0.8, metalness: spec.metalness ?? 0, side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide, vertexColors: !!spec.vertexColors });
-  mat.color.setRGB(spec.color[0], spec.color[1], spec.color[2]);
-  if (physical) { mat.sheen = spec.sheen; mat.sheenColor.setRGB(...spec.sheenColor); mat.sheenRoughness = 0.5; }
-  mat.name = spec.kind;
+
+  const kind = spec.kind;
+  let mat;
+
+  if (kind === 'metal') {
+    mat = new THREE.MeshStandardMaterial({
+      metalness: spec.metalness ?? 0.92,
+      roughness: spec.roughness ?? 0.22,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (opts.envMap || THREE.defaultEnvMap) {
+      mat.envMap = opts.envMap || THREE.defaultEnvMap;
+      mat.envMapIntensity = opts.envMapIntensity ?? 1.2;
+    }
+  } else if (kind === 'cloth' || kind === 'kasaya' || kind === 'robe') {
+    const Cls = THREE.MeshPhysicalMaterial || THREE.MeshStandardMaterial;
+    mat = new Cls({
+      roughness: spec.roughness ?? 0.85,
+      metalness: spec.metalness ?? 0,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (mat.isMeshPhysicalMaterial) {
+      mat.sheen = spec.sheen ?? 0.7;
+      mat.sheenColor = new THREE.Color().setRGB(...(spec.sheenColor ?? [0.9, 0.85, 0.8]));
+      mat.sheenRoughness = spec.sheenRoughness ?? 0.5;
+    }
+  } else if (kind === 'skin' || kind === 'hair') {
+    const Cls = THREE.MeshStandardMaterial;
+    mat = new Cls({
+      roughness: kind === 'skin' ? (spec.roughness ?? 0.6) : (spec.roughness ?? 0.8),
+      metalness: spec.metalness ?? 0,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (opts.proceduralNormalMap) {
+      mat.normalMap = opts.proceduralNormalMap;
+      mat.normalScale = new THREE.Vector2(0.15, 0.15);
+    }
+  } else {
+    const Cls = (spec.sheen > 0 && THREE.MeshPhysicalMaterial) || THREE.MeshStandardMaterial;
+    mat = new Cls({
+      roughness: spec.roughness ?? 0.8,
+      metalness: spec.metalness ?? 0,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (mat.isMeshPhysicalMaterial && spec.sheen > 0) {
+      mat.sheen = spec.sheen;
+      mat.sheenColor = new THREE.Color().setRGB(...(spec.sheenColor ?? [0.9, 0.85, 0.8]));
+      mat.sheenRoughness = 0.5;
+    }
+  }
+
+  if (spec.color) {
+    mat.color.setRGB(spec.color[0], spec.color[1], spec.color[2]);
+  }
+  mat.name = kind || 'material';
   return mat;
 }
 
@@ -147,4 +200,168 @@ export function createWorldObjects(THREE, { terrain, protos, placement, rings },
   if (protos && placement) { out.rocks = createRocks(THREE, protos, placement, opts.rocks); group.add(out.rocks.group); }
   if (rings) group.add((out.mountains = createMountains(THREE, rings, opts.mountains)));
   return out;
+}
+
+/** 1. 程序化呼吸与微动 (Procedural Idle) */
+export function updateProceduralIdle(character, delta, isMoving = false, time = 0) {
+  if (!character || !character.boneByName) return;
+  const spine1 = character.boneByName('spine1');
+  const spine2 = character.boneByName('spine2');
+  const chest = character.boneByName('chest');
+  const head = character.boneByName('head');
+
+  if (isMoving) {
+    if (spine1) spine1.rotation.set(0, 0, 0);
+    if (spine2) spine2.rotation.set(0, 0, 0);
+    if (chest) chest.rotation.set(0, 0, 0);
+    if (head) head.rotation.set(0, 0, 0);
+    return;
+  }
+
+  const breathFreq = 2.2;
+  const breathPhase = time * breathFreq;
+  const breathAmp = 0.035;
+
+  if (spine1) spine1.rotation.x = Math.sin(breathPhase) * (breathAmp * 0.4);
+  if (spine2) spine2.rotation.x = Math.sin(breathPhase + 0.3) * (breathAmp * 0.6);
+  if (chest) chest.rotation.x = Math.sin(breathPhase + 0.6) * breathAmp;
+
+  if (head) {
+    const headRoll = Math.sin(time * 0.8) * 0.02;
+    const headYaw = Math.sin(time * 0.5) * 0.04 + (Math.sin(time * 1.7) > 0.95 ? (Math.sin(time * 12) * 0.05) : 0);
+    const headPitch = -Math.sin(breathPhase + 0.9) * (breathAmp * 0.5);
+    head.rotation.set(headPitch, headYaw, headRoll);
+  }
+}
+
+/** 2. 骑乘状态动力学同步 */
+export function updateRiderDynamics(riderGroup, saddleObject, delta, dampFactor = 12) {
+  if (!riderGroup || !saddleObject) return;
+  const targetWorldPos = new (saddleObject.position.constructor || Array)();
+  if (saddleObject.getWorldPosition) {
+    saddleObject.getWorldPosition(targetWorldPos);
+  } else {
+    targetWorldPos.copy ? targetWorldPos.copy(saddleObject.position) : Object.assign(targetWorldPos, saddleObject.position);
+  }
+
+  if (!riderGroup.userData.currentRidePos) {
+    riderGroup.userData.currentRidePos = targetWorldPos.clone ? targetWorldPos.clone() : { ...targetWorldPos };
+  }
+  const cur = riderGroup.userData.currentRidePos;
+  const f = Math.min(1, delta * dampFactor);
+  cur.x += (targetWorldPos.x - cur.x) * f;
+  cur.y += (targetWorldPos.y - cur.y) * f;
+  cur.z += (targetWorldPos.z - cur.z) * f;
+
+  riderGroup.position.copy ? riderGroup.position.copy(cur) : Object.assign(riderGroup.position, cur);
+}
+
+/** 3. 布料与毛发物理仿真 (Verlet Integration) */
+export class VerletClothSimulator {
+  constructor(mesh, clothMeta, WIND_DIR = [0.8, 0, 0.6]) {
+    this.mesh = mesh;
+    this.clothMeta = clothMeta;
+    this.WIND_DIR = WIND_DIR;
+    this.rows = clothMeta.rows || 6;
+    this.cols = clothMeta.cols || 1;
+    this.pinRow = clothMeta.pin ?? 0;
+
+    const posAttr = mesh.geometry.getAttribute('position');
+    this.count = posAttr.count;
+    this.pos = new Float32Array(posAttr.array);
+    this.oldPos = new Float32Array(posAttr.array);
+    this.originalPos = new Float32Array(posAttr.array);
+  }
+
+  update(delta, characterVelocity = [0, 0, 0]) {
+    if (!this.mesh || !this.mesh.geometry) return;
+    const posAttr = this.mesh.geometry.getAttribute('position');
+    const p = posAttr.array;
+    const dt2 = Math.min(delta, 0.05) ** 2;
+
+    const gravity = [0, -9.8, 0];
+    const wind = this.WIND_DIR;
+    const inertia = [-characterVelocity[0] * 0.5, -characterVelocity[1] * 0.5, -characterVelocity[2] * 0.5];
+
+    const W = this.cols + 1;
+    for (let r = 0; r <= this.rows; r++) {
+      if (r === this.pinRow) continue;
+      for (let c = 0; c <= this.cols; c++) {
+        const i = (r * W + c) * 3;
+        const vx = (p[i] - this.oldPos[i]) * 0.95;
+        const vy = (p[i + 1] - this.oldPos[i + 1]) * 0.95;
+        const vz = (p[i + 2] - this.oldPos[i + 2]) * 0.95;
+
+        this.oldPos[i] = p[i];
+        this.oldPos[i + 1] = p[i + 1];
+        this.oldPos[i + 2] = p[i + 2];
+
+        const ax = gravity[0] + wind[0] * 2.0 + inertia[0];
+        const ay = gravity[1] + wind[1] * 2.0 + inertia[1];
+        const az = gravity[2] + wind[2] * 2.0 + inertia[2];
+
+        p[i] += vx + ax * dt2;
+        p[i + 1] += vy + ay * dt2;
+        p[i + 2] += vz + az * dt2;
+      }
+    }
+
+    // Constraint satisfaction (distance constraints)
+    for (let iteration = 0; iteration < 3; iteration++) {
+      for (let r = 0; r <= this.rows; r++) {
+        for (let c = 0; c <= this.cols; c++) {
+          const idx = r * W + c;
+          if (r > 0) {
+            this._satisfyDistance(idx, (r - 1) * W + c);
+          }
+          if (c > 0) {
+            this._satisfyDistance(idx, r * W + (c - 1));
+          }
+        }
+      }
+    }
+
+    posAttr.needsUpdate = true;
+    if (this.mesh.geometry.computeVertexNormals) {
+      this.mesh.geometry.computeVertexNormals();
+    }
+  }
+
+  _satisfyDistance(i1, i2) {
+    const p = this.mesh.geometry.getAttribute('position').array;
+    const idx1 = i1 * 3, idx2 = i2 * 3;
+    const dx = p[idx2] - p[idx1];
+    const dy = p[idx2 + 1] - p[idx1 + 1];
+    const dz = p[idx2 + 2] - p[idx1 + 2];
+    const dist = Math.hypot(dx, dy, dz) || 1e-6;
+
+    const origDx = this.originalPos[idx2] - this.originalPos[idx1];
+    const origDy = this.originalPos[idx2 + 1] - this.originalPos[idx1 + 1];
+    const origDz = this.originalPos[idx2 + 2] - this.originalPos[idx1 + 2];
+    const restLen = Math.hypot(origDx, origDy, origDz) || 1e-6;
+
+    const diff = (dist - restLen) / dist;
+    const r1 = Math.floor(i1 / (this.cols + 1));
+    const r2 = Math.floor(i2 / (this.cols + 1));
+
+    const pinned1 = (r1 === this.pinRow);
+    const pinned2 = (r2 === this.pinRow);
+
+    if (!pinned1 && !pinned2) {
+      p[idx1] += dx * 0.5 * diff;
+      p[idx1 + 1] += dy * 0.5 * diff;
+      p[idx1 + 2] += dz * 0.5 * diff;
+      p[idx2] -= dx * 0.5 * diff;
+      p[idx2 + 1] -= dy * 0.5 * diff;
+      p[idx2 + 2] -= dz * 0.5 * diff;
+    } else if (!pinned1) {
+      p[idx1] += dx * diff;
+      p[idx1 + 1] += dy * diff;
+      p[idx1 + 2] += dz * diff;
+    } else if (!pinned2) {
+      p[idx2] -= dx * diff;
+      p[idx2 + 1] -= dy * diff;
+      p[idx2 + 2] -= dz * diff;
+    }
+  }
 }

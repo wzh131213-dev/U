@@ -8735,6 +8735,24 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
             220
         );
 
+        if (sun.shadow) {
+            sun.shadow.mapSize.set(4096, 4096);
+            sun.shadow.bias = -0.0005;
+            if (sun.shadow.camera) {
+                sun.shadow.camera.left = -150;
+                sun.shadow.camera.right = 150;
+                sun.shadow.camera.top = 150;
+                sun.shadow.camera.bottom = -150;
+                sun.shadow.camera.near = 10;
+                sun.shadow.camera.far = 1000;
+            }
+        }
+
+        if (renderer && (renderer.toneMapping === undefined || renderer.toneMapping === THREE.NoToneMapping)) {
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+        }
+
         const daylight =
             THREE.MathUtils.clamp(
                 Math.sin(angle) * 0.5 + 0.5,
@@ -8751,21 +8769,26 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
         const sky =
             new THREE.Color();
 
-        sky.setHSL(
-            0.55,
-            0.22,
-            0.43 + daylight * 0.20
-        );
+        // 动态时间光照调色板：黎明/正午/黄昏/夜晚
+        if (daylight > 0.6) {
+            sky.setHSL(0.58, 0.35, 0.45 + daylight * 0.2);
+        } else if (daylight > 0.3) {
+            sky.setHSL(0.08, 0.65, 0.45); // 金黄/晚霞
+        } else {
+            sky.setHSL(0.65, 0.45, 0.12); // 夜空
+        }
 
         scene.background.lerp(
             sky,
-            0.01
+            0.02
         );
 
-        scene.fog.color.lerp(
-            sky,
-            0.01
-        );
+        if (scene.fog) {
+            scene.fog.color.lerp(sky, 0.02);
+            if (scene.fog.density !== undefined) {
+                scene.fog.density = 0.0008 + (1 - daylight) * 0.0012;
+            }
+        }
     }
 
     /*
