@@ -3738,12 +3738,87 @@ function toGeometry(THREE, m, { skinned = false } = {}) {
 /** 材质描述 → THREE 材质。opts.materialFactory(spec) 可返回自定义材质（例如你项目里的 patchMaterial）；返回空则走默认 */
 function makeMaterial(THREE, spec, opts = {}) {
   if (opts.materialFactory) { const custom = opts.materialFactory(spec); if (custom) return custom; }
-  const physical = spec.kind === 'cloth' && spec.sheen > 0 && THREE.MeshPhysicalMaterial;
-  const Cls = physical || THREE.MeshStandardMaterial;
-  const mat = new Cls({ roughness: spec.roughness ?? 0.8, metalness: spec.metalness ?? 0, side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide, vertexColors: !!spec.vertexColors });
-  mat.color.setRGB(spec.color[0], spec.color[1], spec.color[2]);
-  if (physical) { mat.sheen = spec.sheen; mat.sheenColor.setRGB(...spec.sheenColor); mat.sheenRoughness = 0.5; }
-  mat.name = spec.kind;
+  const kind = spec.kind;
+  let mat;
+
+  if (kind === 'metal') {
+    mat = new THREE.MeshStandardMaterial({
+      metalness: spec.metalness ?? 0.92,
+      roughness: spec.roughness ?? 0.22,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (opts.envMap || THREE.defaultEnvMap) {
+      mat.envMap = opts.envMap || THREE.defaultEnvMap;
+      mat.envMapIntensity = opts.envMapIntensity ?? 1.2;
+    }
+  } else if (kind === 'cloth' || kind === 'kasaya' || kind === 'robe') {
+    const Cls = THREE.MeshPhysicalMaterial || THREE.MeshStandardMaterial;
+    mat = new Cls({
+      roughness: spec.roughness ?? 0.85,
+      metalness: spec.metalness ?? 0,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (mat.isMeshPhysicalMaterial) {
+      mat.sheen = spec.sheen ?? 0.7;
+      const sc = spec.sheenColor ?? [0.9, 0.85, 0.8];
+      if (mat.sheenColor && typeof mat.sheenColor.setRGB === 'function') {
+        mat.sheenColor.setRGB(sc[0], sc[1], sc[2]);
+      } else {
+        const ColorCls = THREE.Color || class { constructor(r, g, b) { this.r = r; this.g = g; this.b = b; } };
+        mat.sheenColor = new ColorCls(sc[0], sc[1], sc[2]);
+      }
+      mat.sheenRoughness = spec.sheenRoughness ?? 0.5;
+    }
+  } else if (kind === 'skin' || kind === 'hair') {
+    const Cls = THREE.MeshStandardMaterial;
+    mat = new Cls({
+      roughness: kind === 'skin' ? (spec.roughness ?? 0.6) : (spec.roughness ?? 0.8),
+      metalness: spec.metalness ?? 0,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (opts.proceduralNormalMap) {
+      mat.normalMap = opts.proceduralNormalMap;
+      mat.normalScale = new THREE.Vector2(0.15, 0.15);
+    }
+  } else {
+    const Cls = (spec.sheen > 0 && THREE.MeshPhysicalMaterial) || THREE.MeshStandardMaterial;
+    mat = new Cls({
+      roughness: spec.roughness ?? 0.8,
+      metalness: spec.metalness ?? 0,
+      side: spec.side === 'double' ? THREE.DoubleSide : THREE.FrontSide,
+      vertexColors: !!spec.vertexColors
+    });
+    if (mat.isMeshPhysicalMaterial && spec.sheen > 0) {
+      mat.sheen = spec.sheen;
+      const sc = spec.sheenColor ?? [0.9, 0.85, 0.8];
+      if (mat.sheenColor && typeof mat.sheenColor.setRGB === 'function') {
+        mat.sheenColor.setRGB(sc[0], sc[1], sc[2]);
+      } else {
+        const ColorCls = THREE.Color || class { constructor(r, g, b) { this.r = r; this.g = g; this.b = b; } };
+        mat.sheenColor = new ColorCls(sc[0], sc[1], sc[2]);
+      }
+      mat.sheenRoughness = 0.5;
+    }
+  }
+
+  if (spec.color) {
+    if (mat.color && typeof mat.color.setRGB === 'function') {
+      mat.color.setRGB(spec.color[0], spec.color[1], spec.color[2]);
+    } else if (mat.color && typeof mat.color.set === 'function') {
+      mat.color.set(spec.color[0], spec.color[1], spec.color[2]);
+    } else if (mat.color && typeof mat.color === 'object') {
+      mat.color.r = spec.color[0];
+      mat.color.g = spec.color[1];
+      mat.color.b = spec.color[2];
+    } else {
+      const ColorCls = THREE.Color || class { constructor(r, g, b) { this.r = r; this.g = g; this.b = b; } };
+      mat.color = new ColorCls(spec.color[0], spec.color[1], spec.color[2]);
+    }
+  }
+  mat.name = kind || 'material';
   return mat;
 }
 
@@ -4044,18 +4119,23 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
         const kind = XM_CFG.enabled ? XM_CFG.figures[character.id] : undefined;
         if (kind) {
             try {
-                const baked = getBakedFigure(kind, !!options.ride);
-                const figure = XM.createStaticCharacter(THREE, baked, { castShadow: true });
+                let data = XM.buildCharacterData({ kind });
+                if (options.ride) {
+                    data = XM.poseData(data, XM.RIDE_POSE);
+                }
+                const figure = XM.createCharacter(THREE, data, { castShadow: true });
                 figure.group.scale.setScalar(XM_CFG.unit);
                 inner.add(figure.group);
+                outer.userData.characterHandle = figure;
+                outer.userData.bones = figure.bones;
                 usedNew = true;
                 if (options.ride) {
                     const seat =
-                        (baked.layout.hipY - 0.10 * baked.layout.k) * XM_CFG.unit * scale;
+                        (data.layout.hipY - 0.10 * data.layout.k) * XM_CFG.unit * scale;
                     outer.userData.rideY = XM_CFG.saddleTop - XM_CFG.anchorY - seat;
                 }
             } catch (error) {
-                console.error("新人物模型生成失败，已回退旧模型：", character.id, error);
+                console.error("新人物动态模型生成失败，已回退旧模型：", character.id, error);
             }
         }
         if (!usedNew) {

@@ -48,7 +48,12 @@ export function makeMaterial(THREE, spec, opts = {}) {
     });
     if (mat.isMeshPhysicalMaterial) {
       mat.sheen = spec.sheen ?? 0.7;
-      mat.sheenColor = new THREE.Color().setRGB(...(spec.sheenColor ?? [0.9, 0.85, 0.8]));
+      const sc = spec.sheenColor ?? [0.9, 0.85, 0.8];
+      if (mat.sheenColor && mat.sheenColor.setRGB) {
+        mat.sheenColor.setRGB(sc[0], sc[1], sc[2]);
+      } else {
+        mat.sheenColor = new THREE.Color(sc[0], sc[1], sc[2]);
+      }
       mat.sheenRoughness = spec.sheenRoughness ?? 0.5;
     }
   } else if (kind === 'skin' || kind === 'hair') {
@@ -73,13 +78,29 @@ export function makeMaterial(THREE, spec, opts = {}) {
     });
     if (mat.isMeshPhysicalMaterial && spec.sheen > 0) {
       mat.sheen = spec.sheen;
-      mat.sheenColor = new THREE.Color().setRGB(...(spec.sheenColor ?? [0.9, 0.85, 0.8]));
+      const sc = spec.sheenColor ?? [0.9, 0.85, 0.8];
+      if (mat.sheenColor && mat.sheenColor.setRGB) {
+        mat.sheenColor.setRGB(sc[0], sc[1], sc[2]);
+      } else {
+        mat.sheenColor = new THREE.Color(sc[0], sc[1], sc[2]);
+      }
       mat.sheenRoughness = 0.5;
     }
   }
 
   if (spec.color) {
-    mat.color.setRGB(spec.color[0], spec.color[1], spec.color[2]);
+    if (mat.color && typeof mat.color.setRGB === 'function') {
+      mat.color.setRGB(spec.color[0], spec.color[1], spec.color[2]);
+    } else if (mat.color && typeof mat.color.set === 'function') {
+      mat.color.set(spec.color[0], spec.color[1], spec.color[2]);
+    } else if (mat.color && typeof mat.color === 'object') {
+      mat.color.r = spec.color[0];
+      mat.color.g = spec.color[1];
+      mat.color.b = spec.color[2];
+    } else {
+      const ColorCls = THREE.Color || class { constructor(r, g, b) { this.r = r; this.g = g; this.b = b; } };
+      mat.color = new ColorCls(spec.color[0], spec.color[1], spec.color[2]);
+    }
   }
   mat.name = kind || 'material';
   return mat;
@@ -91,9 +112,13 @@ export function makeMaterial(THREE, spec, opts = {}) {
  * 约定与 CONTRACTS 一致：+Z 朝前、角色左 = +X；静止姿态下骨骼无旋转（动画用相对静止姿态的欧拉偏移）。
  */
 export function createCharacter(THREE, data, opts = {}) {
+  const BoneCls = THREE.Bone || THREE.Object3D;
+  const SkeletonCls = THREE.Skeleton || class Skeleton { constructor(b) { this.bones = b; } };
+  const SkinnedMeshCls = THREE.SkinnedMesh || THREE.Mesh;
+
   const sk = data.skeleton, group = new THREE.Group();
   group.name = `character:${data.kind}`;
-  const bones = sk.bones.map((b) => { const bone = new THREE.Bone(); bone.name = b.name; return bone; });
+  const bones = sk.bones.map((b) => { const bone = new BoneCls(); bone.name = b.name; return bone; });
   sk.bones.forEach((b, i) => {
     const pp = b.parent >= 0 ? sk.bones[b.parent].pos : [0, 0, 0];
     bones[i].position.set(b.pos[0] - pp[0], b.pos[1] - pp[1], b.pos[2] - pp[2]);
@@ -101,12 +126,13 @@ export function createCharacter(THREE, data, opts = {}) {
   });
   group.add(bones[0]);
   group.updateMatrixWorld(true);                         // Skeleton 的逆绑定矩阵取自此刻的世界矩阵
-  const skeleton = new THREE.Skeleton(bones), meshes = [];
+  const skeleton = new SkeletonCls(bones), meshes = [];
   for (const p of data.parts) {
-    const mesh = new THREE.SkinnedMesh(toGeometry(THREE, p, { skinned: true }), makeMaterial(THREE, { ...p.material, vertexColors: !!p.colors }, opts));
+    const mesh = new SkinnedMeshCls(toGeometry(THREE, p, { skinned: true }), makeMaterial(THREE, { ...p.material, vertexColors: !!p.colors }, opts));
     mesh.name = p.name; mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = true;
     if (p.cloth) mesh.userData.cloth = p.cloth;          // 布料网格：rows/cols/pin 行，供后续 verlet 接管
-    group.add(mesh); mesh.bind(skeleton);
+    group.add(mesh);
+    if (mesh.bind) mesh.bind(skeleton);
     meshes.push(mesh);
   }
   const boneByName = (n) => bones[sk.index[n]];
