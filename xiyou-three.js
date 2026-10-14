@@ -209,12 +209,18 @@ export function updateProceduralIdle(character, delta, isMoving = false, time = 
   const spine2 = character.boneByName('spine2');
   const chest = character.boneByName('chest');
   const head = character.boneByName('head');
+  const upperArm_L = character.boneByName('upperArm_L');
+  const upperArm_R = character.boneByName('upperArm_R');
+  const foreArm_L = character.boneByName('foreArm_L');
+  const foreArm_R = character.boneByName('foreArm_R');
+  const hand_L = character.boneByName('hand_L');
+  const hand_R = character.boneByName('hand_R');
+  const thigh_L = character.boneByName('thigh_L');
+  const thigh_R = character.boneByName('thigh_R');
+  const shin_L = character.boneByName('shin_L');
+  const shin_R = character.boneByName('shin_R');
 
   if (isMoving) {
-    if (spine1) spine1.rotation.set(0, 0, 0);
-    if (spine2) spine2.rotation.set(0, 0, 0);
-    if (chest) chest.rotation.set(0, 0, 0);
-    if (head) head.rotation.set(0, 0, 0);
     return;
   }
 
@@ -232,6 +238,83 @@ export function updateProceduralIdle(character, delta, isMoving = false, time = 
     const headPitch = -Math.sin(breathPhase + 0.9) * (breathAmp * 0.5);
     head.rotation.set(headPitch, headYaw, headRoll);
   }
+
+  // 手臂与腿部微动
+  if (upperArm_L) upperArm_L.rotation.z = Math.sin(time * 1.1) * 0.02;
+  if (upperArm_R) upperArm_R.rotation.z = -Math.sin(time * 1.1) * 0.02;
+  if (foreArm_L) foreArm_L.rotation.x = 0.05 + Math.sin(breathPhase) * 0.02;
+  if (foreArm_R) foreArm_R.rotation.x = 0.05 + Math.sin(breathPhase + 0.3) * 0.02;
+  if (hand_L) hand_L.rotation.y = Math.sin(time * 1.5) * 0.03;
+  if (hand_R) hand_R.rotation.y = -Math.sin(time * 1.5) * 0.03;
+
+  if (thigh_L) thigh_L.rotation.x = Math.sin(time * 0.7) * 0.01;
+  if (thigh_R) thigh_R.rotation.x = -Math.sin(time * 0.7) * 0.01;
+  if (shin_L) shin_L.rotation.x = Math.abs(Math.sin(time * 0.7)) * 0.01;
+  if (shin_R) shin_R.rotation.x = Math.abs(Math.cos(time * 0.7)) * 0.01;
+}
+
+/** 动态全身体肢体动作 (全身步态：大腿、小腿、脚部、上臂、前臂、手部及躯干摆动) */
+export function updateCharacterLocomotion(character, delta, isMoving, speed = 4, time = 0) {
+  if (!character || !character.boneByName) return;
+
+  const thigh_L = character.boneByName('thigh_L');
+  const thigh_R = character.boneByName('thigh_R');
+  const shin_L = character.boneByName('shin_L');
+  const shin_R = character.boneByName('shin_R');
+  const foot_L = character.boneByName('foot_L');
+  const foot_R = character.boneByName('foot_R');
+  const upperArm_L = character.boneByName('upperArm_L');
+  const upperArm_R = character.boneByName('upperArm_R');
+  const foreArm_L = character.boneByName('foreArm_L');
+  const foreArm_R = character.boneByName('foreArm_R');
+  const hand_L = character.boneByName('hand_L');
+  const hand_R = character.boneByName('hand_R');
+  const spine1 = character.boneByName('spine1');
+  const chest = character.boneByName('chest');
+
+  if (!isMoving) {
+    if (thigh_L) thigh_L.rotation.set(0, 0, 0);
+    if (thigh_R) thigh_R.rotation.set(0, 0, 0);
+    if (shin_L) shin_L.rotation.set(0, 0, 0);
+    if (shin_R) shin_R.rotation.set(0, 0, 0);
+    if (foot_L) foot_L.rotation.set(0, 0, 0);
+    if (foot_R) foot_R.rotation.set(0, 0, 0);
+    if (upperArm_L) upperArm_L.rotation.set(0, 0, 0);
+    if (upperArm_R) upperArm_R.rotation.set(0, 0, 0);
+    if (foreArm_L) foreArm_L.rotation.set(0, 0, 0);
+    if (foreArm_R) foreArm_R.rotation.set(0, 0, 0);
+    if (hand_L) hand_L.rotation.set(0, 0, 0);
+    if (hand_R) hand_R.rotation.set(0, 0, 0);
+    return;
+  }
+
+  const strideFreq = Math.max(3.5, speed * 1.8);
+  const phase = time * strideFreq;
+
+  // 腿部动作：大腿前屈后伸，小腿在后摆时屈膝，脚尖微翘
+  const thighAmp = Math.min(0.75, 0.25 + speed * 0.08);
+  if (thigh_L) thigh_L.rotation.x = Math.sin(phase) * thighAmp;
+  if (thigh_R) thigh_R.rotation.x = -Math.sin(phase) * thighAmp;
+
+  if (shin_L) shin_L.rotation.x = Math.max(0, Math.sin(phase + Math.PI * 0.25)) * 0.85;
+  if (shin_R) shin_R.rotation.x = Math.max(0, -Math.sin(phase + Math.PI * 0.25)) * 0.85;
+
+  if (foot_L) foot_L.rotation.x = -Math.sin(phase) * 0.25;
+  if (foot_R) foot_R.rotation.x = Math.sin(phase) * 0.25;
+
+  // 手臂动作：与对侧腿交替摆动
+  const armAmp = Math.min(0.6, 0.2 + speed * 0.06);
+  if (upperArm_L) upperArm_L.rotation.x = -Math.sin(phase) * armAmp;
+  if (upperArm_R) upperArm_R.rotation.x = Math.sin(phase) * armAmp;
+
+  if (foreArm_L) foreArm_L.rotation.x = 0.2 + Math.max(0, -Math.sin(phase)) * 0.35;
+  if (foreArm_R) foreArm_R.rotation.x = 0.2 + Math.max(0, Math.sin(phase)) * 0.35;
+
+  if (hand_L) hand_L.rotation.z = Math.sin(phase * 0.5) * 0.1;
+  if (hand_R) hand_R.rotation.z = -Math.sin(phase * 0.5) * 0.1;
+
+  if (spine1) spine1.rotation.y = Math.sin(phase) * 0.08;
+  if (chest) chest.rotation.y = -Math.sin(phase) * 0.05;
 }
 
 /** 2. 骑乘状态动力学同步 */
