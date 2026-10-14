@@ -5385,6 +5385,16 @@ return { TAU, clamp, lerp, smoothstep, v3, mulberry32, hashStr, makeNoise, MeshB
                     (0.38 - mount.userData.riderAnchor.position.y) * 0.18;
             }
         }
+
+        // 调用新架构的腿部与全身步态/微动更新
+        if (typeof XM !== 'undefined' && XM.updateCharacterLocomotion) {
+            const time = (mount.userData.walkTime || 0) * 0.1;
+            const rider = mount.userData.riderAnchor?.children[0];
+            if (rider) {
+                XM.updateCharacterLocomotion(rider.userData?.characterHandle || rider, delta, moving, 4, time);
+                XM.updateProceduralIdle(rider.userData?.characterHandle || rider, delta, moving, time);
+            }
+        }
     }
 
     createPlayerModel();

@@ -320,23 +320,21 @@ export function updateCharacterLocomotion(character, delta, isMoving, speed = 4,
 /** 2. 骑乘状态动力学同步 */
 export function updateRiderDynamics(riderGroup, saddleObject, delta, dampFactor = 12) {
   if (!riderGroup || !saddleObject) return;
-  const targetWorldPos = new (saddleObject.position.constructor || Array)();
-  if (saddleObject.getWorldPosition) {
-    saddleObject.getWorldPosition(targetWorldPos);
-  } else {
-    targetWorldPos.copy ? targetWorldPos.copy(saddleObject.position) : Object.assign(targetWorldPos, saddleObject.position);
-  }
-
+  const targetPos = saddleObject.position;
   if (!riderGroup.userData.currentRidePos) {
-    riderGroup.userData.currentRidePos = targetWorldPos.clone ? targetWorldPos.clone() : { ...targetWorldPos };
+    riderGroup.userData.currentRidePos = targetPos.clone ? targetPos.clone() : { x: targetPos.x || 0, y: targetPos.y || 0, z: targetPos.z || 0 };
   }
   const cur = riderGroup.userData.currentRidePos;
   const f = Math.min(1, delta * dampFactor);
-  cur.x += (targetWorldPos.x - cur.x) * f;
-  cur.y += (targetWorldPos.y - cur.y) * f;
-  cur.z += (targetWorldPos.z - cur.z) * f;
+  cur.x += ((targetPos.x || 0) - cur.x) * f;
+  cur.y += ((targetPos.y || 0) - cur.y) * f;
+  cur.z += ((targetPos.z || 0) - cur.z) * f;
 
-  riderGroup.position.copy ? riderGroup.position.copy(cur) : Object.assign(riderGroup.position, cur);
+  if (riderGroup.position.copy) {
+    riderGroup.position.copy(cur);
+  } else {
+    Object.assign(riderGroup.position, cur);
+  }
 }
 
 /** 3. 布料与毛发物理仿真 (Verlet Integration) */
@@ -351,7 +349,6 @@ export class VerletClothSimulator {
 
     const posAttr = mesh.geometry.getAttribute('position');
     this.count = posAttr.count;
-    this.pos = new Float32Array(posAttr.array);
     this.oldPos = new Float32Array(posAttr.array);
     this.originalPos = new Float32Array(posAttr.array);
   }
@@ -362,9 +359,15 @@ export class VerletClothSimulator {
     const p = posAttr.array;
     const dt2 = Math.min(delta, 0.05) ** 2;
 
+    let localVel = characterVelocity;
+    if (this.mesh.worldToLocal) {
+      const v = new this.mesh.position.constructor(characterVelocity[0], characterVelocity[1], characterVelocity[2]);
+      localVel = [v.x, v.y, v.z];
+    }
+
     const gravity = [0, -9.8, 0];
     const wind = this.WIND_DIR;
-    const inertia = [-characterVelocity[0] * 0.5, -characterVelocity[1] * 0.5, -characterVelocity[2] * 0.5];
+    const inertia = [-localVel[0] * 0.5, -localVel[1] * 0.5, -localVel[2] * 0.5];
 
     const W = this.cols + 1;
     for (let r = 0; r <= this.rows; r++) {
